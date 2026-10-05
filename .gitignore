@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Your alerts: never committed
+*.parquet
+*.avro
+notes.txt
+# MLflow and notebooks run locally
+mlruns/
+mlflow.db
+.ipynb_checkpoints/
+
+# Tests
+.pytest_cache/
+.coverage

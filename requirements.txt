@@ -1,0 +1,10 @@
+# Packages needed on your machine to check, train and log your model.
+# (The preprocessing container only uses preprocessing/requirements.txt.)
+mlflow>=3.6
+scikit-learn>=1.5
+numpy>=1.26
+pandas>=2.0
+pyarrow>=15
+fastavro>=1.9
+jupyterlab>=4.0
+pytest>=7.4
