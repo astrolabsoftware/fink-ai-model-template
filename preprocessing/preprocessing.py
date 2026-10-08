@@ -1,23 +1,19 @@
 """
-Preprocessing: turns one raw ZTF alert into the feature vector of your model.
+Your preprocessing: turns one alert into the features of your model.
 
-It runs in the preprocessing container, on every alert coming from Kafka. Your
-model receives its output, so compute your training features with this same
-function.
-
-Input: one alert of the Fink AI feed, as a Python dict. The feed is Avro
-(schema ztf_alert_v3.3_inference.avsc), decoded by the service before the call:
+Input: one alert of your data transfer, as a Python dict. With a selection of
+columns, the values are at the top level (no candidate, no prv_candidates):
     {
-      "objectId": "ZTF21...",        # str or None
-      "candid": 1500000000000000001, # int or None
-      "candidate": {...} or None,    # the detection: rb, drb, magpsf, isdiffpos...
-      "prv_candidates": [...] or None,  # 30 days of history, oldest first
+      "objectId": "ZTF26...",        # str
+      "candid": 3560118260615015042, # int
+      "magpsf": 17.86, "sigmapsf": 0.05, "fid": 2, "jd": 2461314.6,
+      "nalerthist": 29, "mag_rate": -0.06, "from_upper": False,
+      "lc_features_g": {"amplitude": 0.86, "median": 17.02, ...},
+      ...                            # every column you selected
     }
-  - every field of the schema is there, but any value can be None;
-  - Avro floats are float32: 0.92 arrives as 0.9200000166893005;
-  - isdiffpos is a string: "t"/"1" (positive) or "f"/"0" (negative);
-  - prv_candidates mixes detections and upper limits (non-detections):
-    an upper limit has magpsf None and only diffmaglim;
+  - any value can be None: mag_rate has no value for some alerts;
+  - the light curve features (lc_features_g, lc_features_r) need several
+    detections in the filter: they are NaN for a new object;
   - the cutouts (images) are removed.
 
 Contract (checked by test_contract.py):
@@ -31,14 +27,25 @@ preprocessing/requirements.txt are available in the container.
 
 import math
 
-# One name per value returned by pre_processing(), in the same order.
-# Changing this list changes the model input: retrain and upload a new version.
-FEATURE_NAMES = [
-    "rb",  # real/bogus score computed by ZTF
-    "drb",  # deep learning real/bogus score
+# Columns copied as they are, in this order
+DIRECT = [
     "magpsf",  # PSF magnitude
-    "isdiffpos",  # 1.0 if the subtraction is positive, else 0.0
-    "n_prev_det",  # number of previous detections (upper limits excluded)
+    "sigmapsf",  # error on magpsf
+    "fid",  # filter: 1 = g, 2 = r
+    "nalerthist",  # number of alerts already sent for this object
+    "mag_rate",  # magnitude change per day since the last measurement
+    "sigma_rate",  # error on mag_rate
+    "delta_time",  # days since the last measurement
+]
+
+# One name per value returned by pre_processing(), in the same order.
+# Changing this list changes the model input: retrain your model.
+FEATURE_NAMES = DIRECT + [
+    "days_since_first",  # days since the first detection of the object
+    "from_upper",  # 1.0 if the last measurement was an upper limit
+    "amplitude_g",  # half of the magnitude range in g (0.0 if not computed)
+    "amplitude_r",  # same in r
+    "n_bands_with_lc",  # filters with light curve features: 0, 1 or 2
 ]
 
 
@@ -51,15 +58,22 @@ def _to_float(value, default=0.0):
     return number if math.isfinite(number) else default
 
 
+def _amplitude(alert, band):
+    """Amplitude of the light curve in one filter, None if it is not computed."""
+    features = alert.get(band)
+    return _to_float(features.get("amplitude"), None) if isinstance(features, dict) else None
+
+
 def pre_processing(alert):
     """Return the feature vector of one alert, in the order of FEATURE_NAMES."""
-    candidate = alert.get("candidate") or {}
-    previous_detections = alert.get("prv_candidates") or []  # detections + upper limits
+    jd = _to_float(alert.get("jd"))
+    amplitude_g = _amplitude(alert, "lc_features_g")
+    amplitude_r = _amplitude(alert, "lc_features_r")
 
-    return [
-        _to_float(candidate.get("rb")),
-        _to_float(candidate.get("drb")),
-        _to_float(candidate.get("magpsf")),
-        1.0 if candidate.get("isdiffpos") in ("t", "1") else 0.0,
-        float(sum(1 for p in previous_detections if p and p.get("magpsf") is not None)),
+    return [_to_float(alert.get(name)) for name in DIRECT] + [
+        max(0.0, jd - _to_float(alert.get("jd_first_real_det"), jd)),
+        1.0 if alert.get("from_upper") is True else 0.0,
+        amplitude_g or 0.0,
+        amplitude_r or 0.0,
+        float((amplitude_g is not None) + (amplitude_r is not None)),
     ]

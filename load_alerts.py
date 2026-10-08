@@ -1,18 +1,18 @@
 """
 Read Fink alerts from files, in the same shape as in production.
 
-In production, pre_processing() receives one alert of the Fink AI feed, as a dict
-with only objectId, candid, candidate and prv_candidates. The readers below give
-exactly that, whatever the file format, so a preprocessing that works on your
-files also works in the container.
+In production, pre_processing() receives one alert of your data transfer, as a
+dict with every column you selected, except the cutouts (images). The readers
+below give exactly that, whatever the file format, so a preprocessing that works
+on your files also works in the container.
 
 Supported inputs: a file, or a folder read recursively, of
   - .parquet   e.g. the output of fink_datatransfer (ftransfer_ztf_<date>_<id>/)
   - .avro      Avro container files
   - .jsonl     one alert per line
 
-The other columns (tnsclass, cdsxmatch...) are not given to pre_processing(), but
-you can read them as labels: see read_alerts(columns=...).
+To also read some columns as labels (tnsclass, roid...), see
+read_alerts(columns=...).
 """
 
 import json
@@ -25,8 +25,8 @@ from pathlib import Path
 import fastavro
 import pyarrow.parquet as pq
 
-# The fields sent by the Fink AI feed (schema ztf_alert_v3.3_inference.avsc)
-PRODUCTION_FIELDS = ["objectId", "candid", "candidate", "prv_candidates"]
+# The images, removed before pre_processing() in production too
+CUTOUT_FIELDS = {"cutoutScience", "cutoutTemplate", "cutoutDifference"}
 
 FORMATS = (".parquet", ".avro", ".jsonl")
 
@@ -57,6 +57,27 @@ FULL_ALERT = {
     ],
 }
 
+# An alert of a data transfer with a selection of columns: the values are at the
+# top level, there is no candidate and no history
+FLAT_ALERT = {
+    "objectId": "ZTF26smoketest",
+    "candid": 1234567891,
+    "magpsf": 17.858,
+    "sigmapsf": 0.051,
+    "fid": 2,
+    "jd": 2461314.6,
+    "jd_first_real_det": 2461298.7,
+    "nalerthist": 29,
+    "mag_rate": -0.06,
+    "sigma_rate": 0.093,
+    "delta_time": 0.913,
+    "from_upper": False,
+    "lc_features_g": {"amplitude": 0.857, "median": 17.02},
+    # Not enough points in this filter: the features are NaN or None
+    "lc_features_r": {"amplitude": float("nan"), "median": None},
+    "roid": 0,
+}
+
 # Incomplete alerts that real streams do contain
 INCOMPLETE_ALERTS = [
     {},
@@ -66,9 +87,10 @@ INCOMPLETE_ALERTS = [
     # What Avro gives for an empty record: every key is there, every value is None
     {"objectId": None, "candid": None, "candidate": None, "prv_candidates": None},
     {"candidate": {"rb": None, "drb": None, "magpsf": None, "isdiffpos": None}, "prv_candidates": [{}]},
+    {"magpsf": None, "mag_rate": None, "from_upper": None, "lc_features_g": None},
 ]
 
-EXAMPLE_ALERTS = [FULL_ALERT, *INCOMPLETE_ALERTS]
+EXAMPLE_ALERTS = [FULL_ALERT, FLAT_ALERT, *INCOMPLETE_ALERTS]
 
 
 def alert_files(path):
@@ -83,7 +105,7 @@ def read_alerts(path, limit=None, columns=()):
     """Yield (alert, extra) for each alert of path.
 
     alert: exactly what pre_processing() receives in production.
-    extra: the other columns asked for, e.g. columns=["tnsclass"] for labels.
+    extra: the columns asked for, e.g. columns=["tnsclass"] for labels.
            A field inside the alert is asked for with a dot: "candidate.classtar".
 
     With a limit, at most limit alerts are read, from files taken in turn from
@@ -95,28 +117,20 @@ def read_alerts(path, limit=None, columns=()):
     files = alert_files(path)
     if not files:
         raise FileNotFoundError(f"No alert file ({', '.join(FORMATS)}) in {path}")
-    needed = PRODUCTION_FIELDS + [name.split(".")[0] for name in columns]
     if limit:
         files = _one_folder_after_the_other(files)
 
     count = 0
-    for file, records in _read_files(files, needed, limit):
-        has_candidate = False
+    for file, records in _read_files(files, limit):
         for record in records:
             if not isinstance(record, dict):
                 raise ValueError(f"{file}: an alert must be an object, not {type(record).__name__}")
-            has_candidate = has_candidate or "candidate" in record
-            alert = {name: record.get(name) for name in PRODUCTION_FIELDS}
+            alert = {name: value for name, value in record.items() if name not in CUTOUT_FIELDS}
             extra = {name: _get(record, name) for name in columns}
             yield alert, extra
             count += 1
             if limit and count >= limit:
                 return
-        if not has_candidate:
-            raise ValueError(
-                f"{file} does not contain Fink alerts (no 'candidate' field). "
-                "Download the alerts with fink_datatransfer or fink-client."
-            )
 
 
 def load_alerts(path, limit=None):
@@ -137,12 +151,12 @@ def _one_folder_after_the_other(files):
     return [file for file in chain(*zip_longest(*folders.values())) if file is not None]
 
 
-def _read_files(files, columns, max_records):
+def _read_files(files, max_records):
     """Yield (file, records) in order, at most max_records per file. Parquet files
     are read ahead by threads."""
     pool = ThreadPoolExecutor(READ_THREADS)
     jobs = (
-        (file, pool.submit(_parquet_batches, file, columns, max_records) if file.suffix == ".parquet" else None)
+        (file, pool.submit(_parquet_batches, file, max_records) if file.suffix == ".parquet" else None)
         for file in files
     )
     ahead = deque(islice(jobs, 2 * READ_THREADS))
@@ -161,12 +175,12 @@ def _read_files(files, columns, max_records):
         pool.shutdown(cancel_futures=True)
 
 
-def _parquet_batches(path, columns, max_records):
-    """Read the columns asked for (only them: this is the slow part) of at most
-    max_records rows of one parquet file, as Arrow record batches."""
+def _parquet_batches(path, max_records):
+    """Read at most max_records rows of one parquet file, as Arrow record batches.
+    The cutouts are not read: they are the heavy part, and pre_processing() never
+    gets them."""
     parquet = pq.ParquetFile(path)
-    present = set(parquet.schema_arrow.names)
-    names = [name for name in dict.fromkeys(columns) if name in present]
+    names = [name for name in parquet.schema_arrow.names if name not in CUTOUT_FIELDS]
     batches, count = [], 0
     # Small batches when few alerts are needed, so that no row is read for nothing
     for batch in parquet.iter_batches(batch_size=min(500, max_records or 500), columns=names):

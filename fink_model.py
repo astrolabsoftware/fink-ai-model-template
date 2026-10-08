@@ -6,7 +6,7 @@ You mainly use three functions (see train.ipynb):
     X, info = load_features("~/fink-client/ftransfer_ztf_...")   # your alerts
     with start_run("my-model"):                                  # MLflow run
         model.fit(X, y)                                          # your model
-        log_model(model)                                         # ready to deploy
+        log_model(model)                                         # checked, uploaded
 
 They log everything the service needs, and refuse a model that would not work
 in production:
@@ -70,17 +70,28 @@ def load_features(path, limit=None, columns=()):
     _compute_features(prep, EXAMPLE_ALERTS)
     # objectId and candid are always the first columns of info
     columns = [name for name in dict.fromkeys(columns) if name not in ("objectId", "candid")]
-    rows = []
+    rows, fields = [], []
 
     def alerts():
         """Yield the alerts one by one: only their features are kept in memory."""
         for alert, extra in read_alerts(path, limit, columns):
-            rows.append({"objectId": alert["objectId"], "candid": alert["candid"], **extra})
+            if not rows:
+                fields.extend(alert)
+            rows.append({"objectId": alert.get("objectId"), "candid": alert.get("candid"), **extra})
             yield alert
 
     X, ms_per_alert = _compute_features(prep, alerts())
     _check_speed(ms_per_alert)
     info = pd.DataFrame(rows, columns=["objectId", "candid", *columns])
+
+    constant = [name for name, column in zip(prep.FEATURE_NAMES, X.T) if np.all(column == column[0])]
+    if len(X) > 1 and len(constant) == len(prep.FEATURE_NAMES):
+        raise FinkModelError(
+            "Every feature has the same value for every alert: pre_processing() reads "
+            "fields that your alerts do not have. Your alerts contain: "
+            + ", ".join(fields[:15])
+            + (f"... ({len(fields)} columns)" if len(fields) > 15 else "")
+        )
 
     _state.update(
         data_path=str(Path(path).expanduser().resolve()),
@@ -91,7 +102,6 @@ def load_features(path, limit=None, columns=()):
     )
 
     print(f"{len(X)} alerts, {X.shape[1]} features, {ms_per_alert:.3f} ms per alert")
-    constant = [name for name, column in zip(prep.FEATURE_NAMES, X.T) if np.all(column == column[0])]
     if constant:
         print(f"Warning: same value for every alert (wrong field name?): {', '.join(constant)}")
     return X, info
@@ -142,7 +152,8 @@ def start_run(model_name):
 def log_model(model):
     """Check the model against your preprocessing, then upload both to MLflow.
 
-    Returns the version of the model in the MLflow registry.
+    Nothing is registered: register the run you want to deploy in the MLflow
+    interface. Returns the id of the run.
     """
     import mlflow
     from mlflow.models import infer_signature
@@ -172,10 +183,9 @@ def log_model(model):
     mlflow.log_metric("preprocessing_ms_per_alert", _state["ms_per_alert"])
 
     # The model container serves this model: one row of FEATURE_NAMES per alert
-    model_info = mlflow.sklearn.log_model(
+    mlflow.sklearn.log_model(
         model,
         name="model",
-        registered_model_name=model_name,
         signature=infer_signature(X, predictions),
         input_example=X[:2],
         skops_trusted_types=_trusted_types(model),
@@ -185,12 +195,11 @@ def log_model(model):
     for path in _preprocessing_files():
         mlflow.log_artifact(str(path), artifact_path="preprocessing")
 
-    # Read by the service to name and tag the Docker images
-    version = model_info.registered_model_version
-    mlflow.set_tags({"model_name": model_name, "version": str(version)})
+    # Read by the service to name the Docker images
+    mlflow.set_tag("model_name", model_name)
 
-    print(f"Uploaded {model_name} version {version} (run {run.info.run_id}).")
-    return version
+    print(f"Uploaded {model_name} (run {run.info.run_id}). To deploy it, register this run in MLflow.")
+    return run.info.run_id
 
 
 def preprocessing():
@@ -263,13 +272,9 @@ def _compute_features(prep, alerts):
 
 
 def _trusted_types(model):
-    """Types of your model that skops must accept when loading it back.
-
-    MLflow saves scikit-learn models with skops, which refuses by default some
-    types (e.g. the trees of a RandomForest) because a file from an unknown
-    source could misuse them. This model comes from your own session, so its
-    types are trusted; MLflow stores the list with the model for the container.
-    """
+    """Types that skops (used by MLflow to save scikit-learn models) refuses by
+    default, e.g. the trees of a RandomForest. The model comes from your own
+    session, so they are trusted."""
     try:
         import skops.io
     except ImportError:
