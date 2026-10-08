@@ -54,6 +54,8 @@ Edit `preprocessing/preprocessing.py`:
 - `FEATURE_NAMES`: the names of the features, in order;
 - `pre_processing(alert)`: takes one alert (a `dict`) and returns one float per name in `FEATURE_NAMES`.
 
+Keep the name `pre_processing`: it is the only function called in production. Helper functions are allowed, as long as they are called from it.
+
 The docstring of the file describes the content of an alert. Packages required by the preprocessing are listed in `preprocessing/requirements.txt`, with pinned versions.
 
 ### 3. Check the preprocessing
@@ -109,10 +111,11 @@ Building the containers and running the model on Fink alerts is covered by the [
 
 ## Preprocessing contract
 
-1. **`pre_processing()` never raises.** Real alerts have missing and `None` fields: return a default value.
-2. **It is fast.** It runs on every alert of the stream: no pandas DataFrame, no file access, no network call per alert.
-3. **The order of `FEATURE_NAMES` is the input of the model.** After changing the list, train a new model.
-4. **Only the files of `preprocessing/` are uploaded, not its subfolders.** The container receives its `.py` files and `requirements.txt`: no data file, and never secrets.
+1. **The function is named `pre_processing`.** The service calls it by this name: renamed, or with the code left outside of it, the preprocessing does not run.
+2. **`pre_processing()` never raises.** Real alerts have missing and `None` fields: return a default value.
+3. **It is fast.** It runs on every alert of the stream: no pandas DataFrame, no file access, no network call per alert.
+4. **The order of `FEATURE_NAMES` is the input of the model.** After changing the list, train a new model.
+5. **Only the files of `preprocessing/` are uploaded, not its subfolders.** The container receives its `.py` files and `requirements.txt`: no data file, and never secrets.
 
 The contract is verified again by the CI of the Fink AI service when the containers are built: sample alerts, complete and incomplete, are sent through the preprocessing container, then through the model container. The build fails if an alert does not give one finite feature vector of the expected length, or if the model does not accept it.
 

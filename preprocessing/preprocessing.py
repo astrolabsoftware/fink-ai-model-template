@@ -17,6 +17,8 @@ columns, the values are at the top level (no candidate, no prv_candidates):
   - the cutouts (images) are removed.
 
 Contract (checked by test_contract.py):
+  - the function must keep the name pre_processing: it is the only one called
+    in production, so everything has to run from it;
   - pre_processing(alert) takes one alert (a dict) and returns a list of floats;
   - the list always has len(FEATURE_NAMES) values, in the same order;
   - it never fails on a missing or None field: it uses a default value instead.
