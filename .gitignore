@@ -16,3 +16,7 @@ mlflow.db
 # Tests
 .pytest_cache/
 .coverage
+
+# Packaging
+*.egg-info/
+build/

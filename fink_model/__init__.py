@@ -33,10 +33,10 @@ os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from load_alerts import EXAMPLE_ALERTS, alert_files, read_alerts  # noqa: E402
+from fink_model.alerts import EXAMPLE_ALERTS, alert_files, read_alerts  # noqa: E402
 
-HERE = Path(__file__).parent
-PREPROCESSING_DIR = HERE / "preprocessing"
+# The folder next to fink_model/, at the root of the repository
+PREPROCESSING_DIR = Path(__file__).parent.parent / "preprocessing"
 
 # pre_processing() runs on every alert of the stream: above this, the preprocessing
 # container cannot follow the stream. 5 ms = 200 alerts/s per CPU core.
@@ -120,7 +120,7 @@ def start_run(model_name):
         )
     if "features" not in _state:
         raise FinkModelError("Load your training alerts with load_features() first.")
-    import mlflow  # here, not at the top: it takes seconds, and check.py does not need it
+    import mlflow  # here, not at the top: it takes seconds, and fink-model check does not need it
 
     mlflow.set_experiment(model_name)
     # Parameters and training metrics of scikit-learn, XGBoost, LightGBM...

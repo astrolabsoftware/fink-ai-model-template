@@ -1,8 +1,8 @@
 """
-The checks of fink_model.py, as tests.
+The checks of fink_model, as tests.
 
 Run:
-    pytest test_contract.py
+    pytest tests/test_contract.py
 """
 
 import json
@@ -10,7 +10,7 @@ import json
 import pytest
 
 from fink_model import PREPROCESSING_DIR, _check_speed, _compute_features, contract_error, preprocessing
-from load_alerts import EXAMPLE_ALERTS, FLAT_ALERT, FULL_ALERT
+from fink_model.alerts import EXAMPLE_ALERTS, FLAT_ALERT, FULL_ALERT
 
 prep = preprocessing()
 

@@ -2,7 +2,7 @@
 The whole notebook on a temporary MLflow: load_features -> start_run -> log_model.
 
 Run:
-    pytest test_fink_model.py
+    pytest tests/test_fink_model.py
 """
 
 import json
@@ -12,7 +12,7 @@ import pytest
 from sklearn.tree import DecisionTreeClassifier
 
 import fink_model
-from load_alerts import FLAT_ALERT
+from fink_model.alerts import FLAT_ALERT
 
 
 @pytest.fixture

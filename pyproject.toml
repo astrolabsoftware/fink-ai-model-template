@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fink-model"
+version = "0.1.0"
+description = "Check, train and log a model for the Fink AI service"
+requires-python = ">=3.10"
+# Packages needed on your machine to check, train and log your model.
+# (The preprocessing container only uses preprocessing/requirements.txt.)
+dependencies = [
+    "mlflow>=3.6",
+    "scikit-learn>=1.5",
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "pyarrow>=15",
+    "fastavro>=1.9",
+    "jupyterlab>=4.0",
+    "pytest>=7.4",
+]
+
+[project.scripts]
+fink-model = "fink_model.cli:main"
+
+[tool.setuptools]
+packages = ["fink_model"]

@@ -42,7 +42,7 @@ git clone git@github.com:Farid841/model_template.git
 cd model_template
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .                 # installs the packages and the fink-model command
 ```
 
 ## Workflow
@@ -72,11 +72,11 @@ The docstring of the file shows what an alert contains. Packages used by the pre
 ### 3. Check it
 
 ```bash
-python check.py <path-to-your-alerts>          # 2000 alerts, spread over all the files
-python check.py <path-to-your-alerts> --all    # every alert
+fink-model check <path-to-your-alerts>          # 2000 alerts, spread over all the files
+fink-model check <path-to-your-alerts> --all    # every alert
 ```
 
-`check.py` runs `pre_processing()` on your alerts exactly as in production (every column of your files, except the cutouts), then prints `OK` or the reason of the failure:
+`fink-model check` runs `pre_processing()` on your alerts exactly as in production (every column of your files, except the cutouts), then prints `OK` or the reason of the failure:
 
 | Check | Result |
 |---|---|
@@ -85,7 +85,7 @@ python check.py <path-to-your-alerts> --all    # every alert
 | Every feature has the same value for every alert | Refused: the preprocessing does not match your alerts. The columns of your alerts are listed |
 | One feature has the same value for every alert | Warning: usually a wrong field name |
 
-The same checks run with `pytest test_contract.py`, on built-in example alerts.
+The same checks run with `pytest`, on built-in example alerts.
 
 ### 4. Train and log the model
 
@@ -129,14 +129,16 @@ Building the two containers and running the model on Fink alerts is covered by t
 
 ```
 model_template/
-├── preprocessing/
+├── preprocessing/         yours
 │   ├── preprocessing.py   your feature extraction (runs in production)
 │   └── requirements.txt   packages needed by preprocessing.py
-├── train.ipynb            template notebook: copy it and train your model
-├── check.py               checks the preprocessing on your alerts
-├── fink_model.py          the functions used by the notebook
-├── load_alerts.py         reads your alerts like the service reads Kafka
-├── test_contract.py       the same checks, with pytest
-├── test_fink_model.py     the whole notebook, on a temporary MLflow
-└── requirements.txt       packages needed on your machine
+├── train.ipynb            yours: template notebook, copy it and train your model
+├── fink_model/            the tools, nothing to edit
+│   ├── __init__.py        the functions used by the notebook
+│   ├── alerts.py          reads your alerts like the service reads Kafka
+│   └── cli.py             the fink-model command
+├── tests/
+│   ├── test_contract.py   the checks of fink-model check, with pytest
+│   └── test_fink_model.py the whole notebook, on a temporary MLflow
+└── pyproject.toml         packages needed on your machine
 ```
